@@ -6,6 +6,7 @@ import httpx
 import os
 import regina_reg_sec_user_dto
 import regina_wrapper_reg_sec_user
+from regina_intent_model import load_or_create_model, retrain_model, save_example
 
 app = FastAPI()
 
@@ -32,16 +33,21 @@ API_URL_SEC = "https://marcaciongps.aquariusconsultores.com:8443/regina-billing-
 
 USER = regina_reg_sec_user_dto.WrapperRegSecUser()
 
+intent_model = load_or_create_model()
+
+class EntrenamientoRequest(BaseModel):
+    texto: str
+    intent: str
+
+
 # -------------------------------
 # Obtiene token igual que Angular
 # -------------------------------
 def obtener_token(dto: regina_reg_sec_user_dto.WrapperRegSecUser) -> str:
     url = f"{API_URL_AUTH}autenticar"
-    print(f"URL de autenticación: {url}")
     headers = {
         "Content-Type": "application/json"
     }
-    print (f"Obteniendo token para {dto.userUsername}... con URL {url}")
     with httpx.Client(timeout=30, verify=False) as client:
         response = client.post(
             url,
@@ -51,7 +57,6 @@ def obtener_token(dto: regina_reg_sec_user_dto.WrapperRegSecUser) -> str:
         response.raise_for_status()
 
         data = response.json()
-        print(f"Token obtenido: {data.get('token')}")
         return data.get("token")
 
 
@@ -100,9 +105,6 @@ async def obtener_ordenes_pago_api(
 async def obtener_usuarios_api(
     dto: regina_wrapper_reg_sec_user
 ):
-
-    print("Dto recibido en obtener_usuarios_api:", dto)
-
     url = (
         f"{API_URL_SEC}"
         f"usuario/listar/"
@@ -110,9 +112,6 @@ async def obtener_usuarios_api(
         f"{dto.codSucursal}/"
     )
 
-    print("URL construida en obtener_usuarios_api:", url)
-
-    # 👉 igual que en Angular: se usa el token ya existente
     api_token = dto.authToken
     if not api_token:
         raise Exception("authToken no enviado en el DTO")
@@ -138,9 +137,11 @@ async def chat(usuario: regina_reg_sec_user_dto.WrapperRegSecUser):
 
     try:
 
-        match True:
+        intent = intent_model.predict(texto)
 
-            case _ if ("ordenes de pago" in texto) or ("órdenes de pago" in texto) or ("ordenes" in texto) or ("órdenes" in texto):
+        match intent:
+
+            case "ORDENES_PAGO":
 
                 data = await obtener_ordenes_pago_api(usuario)
 
@@ -150,12 +151,14 @@ async def chat(usuario: regina_reg_sec_user_dto.WrapperRegSecUser):
                     "data": data
                 }
 
-            case _ if "usuarios" in texto:
+            case "USUARIOS":
+
                 wrapper = regina_wrapper_reg_sec_user.WrapperRegSecListUsers(
                     codEmpresa=usuario.codEmpresa,
                     codSucursal=usuario.codSucursal,
                     authToken=usuario.authToken
                 )
+
                 data = await obtener_usuarios_api(wrapper)
 
                 return {
@@ -167,24 +170,32 @@ async def chat(usuario: regina_reg_sec_user_dto.WrapperRegSecUser):
             case _:
                 return {
                     "tipo": "texto",
-                    "respuesta": "No tengo una respuesta para tu pregunta"
+                    "respuesta": "No entendí tu solicitud"
                 }
 
-    except httpx.HTTPStatusError as e:
-        return {
-            "tipo": "error",
-            "respuesta": "Error al consumir la API",
-            "status": e.response.status_code,
-            "detalle": e.response.text
-        }
-
     except Exception as e:
-        print(f"Error inesperado: {str(e)}")
         return {
             "tipo": "error",
             "respuesta": "Error inesperado",
             "detalle": str(e)
         }
+    
+@app.post("/entrenar-intent")
+def entrenar_intent(req: EntrenamientoRequest):
+
+    global intent_model
+
+    save_example(
+        req.texto.lower().strip(),
+        req.intent.strip().upper()
+    )
+
+    intent_model = retrain_model()
+
+    return {
+        "ok": True,
+        "mensaje": "Modelo reentrenado correctamente"
+    }
 
 
 # -------------------------------
