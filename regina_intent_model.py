@@ -1,120 +1,160 @@
-import joblib
 import os
 import json
+import joblib
+import re
+from typing import List, Tuple
 
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import SGDClassifier
 from sklearn.pipeline import Pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
 
 
-MODEL_FILE = "intent_model.joblib"
-DATASET_FILE = "intent_dataset.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+MODEL_PATH = os.path.join(BASE_DIR, "intent_model.joblib")
+DATA_PATH = os.path.join(BASE_DIR, "intent_examples.json")
 
 
-class IntentModel:
+# ----------------------------
+# normalización
+# ----------------------------
+def normalize_text(text: str) -> str:
+    text = text.lower().strip()
 
-    def __init__(self):
-        self.pipeline = Pipeline([
-            ("tfidf", TfidfVectorizer(
-                lowercase=True,
-                ngram_range=(1, 2)
-            )),
-            ("clf", SGDClassifier(random_state=42))
-        ])
+    text = re.sub(r"[^\w\s]", " ", text)
+    text = re.sub(r"\s+", " ", text)
 
-    def train(self, texts, labels):
-        self.pipeline.fit(texts, labels)
-
-    def predict(self, text: str):
-        return self.pipeline.predict([text])[0]
-
-    def save(self):
-        joblib.dump(self.pipeline, MODEL_FILE)
-
-    def load(self):
-        self.pipeline = joblib.load(MODEL_FILE)
+    return text
 
 
-def load_dataset():
+# ----------------------------
+# dataset base
+# ----------------------------
+DEFAULT_DATA = [
+    # ORDENES DE PAGO
+    ("ordenes de pago", "ORDENES_PAGO"),
+    ("lista de ordenes de pago", "ORDENES_PAGO"),
+    ("listado de ordenes de pago", "ORDENES_PAGO"),
+    ("ver ordenes de pago", "ORDENES_PAGO"),
+    ("consultar ordenes de pago", "ORDENES_PAGO"),
+    ("ordenes", "ORDENES_PAGO"),
+    ("listar ordenes", "ORDENES_PAGO"),
+    ("lista de ordenes", "ORDENES_PAGO"),
 
-    if not os.path.exists(DATASET_FILE):
-        return [], []
+    # USUARIOS
+    ("usuarios", "USUARIOS"),
+    ("lista de usuarios", "USUARIOS"),
+    ("listado de usuarios", "USUARIOS"),
+    ("ver usuarios", "USUARIOS"),
+    ("consultar usuarios", "USUARIOS"),
+    ("mostrar usuarios", "USUARIOS"),
+    ("listar usuarios", "USUARIOS"),
+]
 
-    with open(DATASET_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
 
-    texts = [x["text"] for x in data]
-    labels = [x["label"] for x in data]
+# ----------------------------
+# carga ejemplos
+# ----------------------------
+def load_examples() -> List[Tuple[str, str]]:
 
-    return texts, labels
+    data = list(DEFAULT_DATA)
+
+    if os.path.exists(DATA_PATH):
+        with open(DATA_PATH, "r", encoding="utf-8") as f:
+            user_data = json.load(f)
+
+        for item in user_data:
+            data.append((item["text"], item["intent"]))
+
+    return data
 
 
-def save_example(text, label):
+# ----------------------------
+# guardar ejemplo nuevo
+# ----------------------------
+def save_example(text: str, intent: str):
 
-    data = []
+    text = normalize_text(text)
 
-    if os.path.exists(DATASET_FILE):
-        with open(DATASET_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+    examples = []
 
-    data.append({
+    if os.path.exists(DATA_PATH):
+        with open(DATA_PATH, "r", encoding="utf-8") as f:
+            examples = json.load(f)
+
+    examples.append({
         "text": text,
-        "label": label
+        "intent": intent
     })
 
-    with open(DATASET_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
+        json.dump(examples, f, ensure_ascii=False, indent=2)
 
 
-def retrain_model():
+# ----------------------------
+# entrenamiento
+# ----------------------------
+def train_model():
 
-    texts, labels = load_dataset()
+    data = load_examples()
 
-    if len(texts) < 2:
-        raise Exception("No hay suficientes ejemplos para reentrenar")
+    X = [normalize_text(t) for t, _ in data]
+    y = [label for _, label in data]
 
-    model = IntentModel()
-    model.train(texts, labels)
-    model.save()
+    pipeline = Pipeline([
+        ("tfidf", TfidfVectorizer(
+            ngram_range=(1, 2),
+            min_df=1
+        )),
+        ("clf", LogisticRegression(max_iter=2000))
+    ])
 
-    return model
+    pipeline.fit(X, y)
 
+    joblib.dump(pipeline, MODEL_PATH)
+
+    return pipeline
+
+
+# ----------------------------
+# cargar o crear
+# ----------------------------
 def load_or_create_model():
 
-    if os.path.exists(MODEL_FILE):
-        model = IntentModel()
-        model.load()
-        return model
+    if os.path.exists(MODEL_PATH):
+        return IntentModel(joblib.load(MODEL_PATH))
 
-    texts, labels = load_dataset()
+    model = train_model()
+    return IntentModel(model)
 
-    if len(texts) == 0:
-        texts = [
-            "ordenes de pago",
-            "lista de ordenes de pago",
-            "quiero ver ordenes de pago",
-            "mis ordenes",
-            "usuarios",
-            "listar usuarios",
-            "ver usuarios"
-        ]
 
-        labels = [
-            "ORDENES_PAGO",
-            "ORDENES_PAGO",
-            "ORDENES_PAGO",
-            "ORDENES_PAGO",
-            "USUARIOS",
-            "USUARIOS",
-            "USUARIOS"
-        ]
+# ----------------------------
+# reentrenar
+# ----------------------------
+def retrain_model():
 
-        model = IntentModel()
-        model.train(texts, labels)
-        model.save()
-        return model
+    model = train_model()
+    return IntentModel(model)
 
-    model = IntentModel()
-    model.train(texts, labels)
-    model.save()
-    return model
+
+# ----------------------------
+# wrapper del modelo
+# ----------------------------
+class IntentModel:
+
+    def __init__(self, pipeline):
+        self.pipeline = pipeline
+
+    def predict(self, text: str) -> Tuple[str, float]:
+
+        text_n = normalize_text(text)
+
+        proba = self.pipeline.predict_proba([text_n])[0]
+        classes = self.pipeline.classes_
+
+        idx = proba.argmax()
+
+        intent = classes[idx]
+        score = float(proba[idx])
+
+        return intent, score
