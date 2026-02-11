@@ -10,3 +10,4 @@ class WrapperRegSecUser(BaseModel):
     codEmpresa: Optional[str] = None
     codSucursal: Optional[str] = None
     codAuxiliar: Optional[str] = None
+    isAdmin: Optional[str] = None

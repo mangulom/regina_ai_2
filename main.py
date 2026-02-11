@@ -72,13 +72,14 @@ class PreguntaRequest(BaseModel):
 async def obtener_ordenes_pago_api(
     dto: regina_reg_sec_user_dto
 ):
-
+    print("el dto", dto)
     url = (
         f"{API_URL_PROCESS}"
         f"orden-pago/listar/"
         f"{dto.codEmpresa}/"
         f"{dto.codSucursal}/"
         f"{dto.codAuxiliar}/"
+        f"{dto.isAdmin}/"
     )
 
     # 👉 igual que en Angular: se usa el token ya existente
@@ -144,7 +145,7 @@ async def chat(usuario: regina_reg_sec_user_dto.WrapperRegSecUser):
         match True:
 
             case _ if ("ordenes de pago" in texto) or ("órdenes de pago" in texto) or ("ordenes" in texto) or ("órdenes" in texto):
-
+                print(usuario)
                 data = await obtener_ordenes_pago_api(usuario)
 
                 return {
