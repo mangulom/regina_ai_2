@@ -195,7 +195,7 @@ async def chat(usuario: regina_reg_sec_user_dto.WrapperRegSecUser):
                     "respuesta": "Lista de usuarios obtenida correctamente",
                     "data": data
                 }
-            case _ if ("crear usuario" in texto) or ("crear un nuevo usuario" in texto):
+            case _ if ("crear usuario" in texto) or ("crear un nuevo usuario" in texto) or ("crear nuevo usuario" in texto):
                 if(usuario.isAdmin=="A"):
                     return {
                         "tipo": "usuario_true",
